@@ -7,6 +7,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import me.ilya40umov.issue32578.filters.BaggageAddingFilter
 import me.ilya40umov.issue32578.filters.FeatureFlagsContextFilter
 import me.ilya40umov.issue32578.filters.RequestLoggingFilter
+import org.slf4j.LoggerFactory
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.web.reactive.function.server.RouterFunction
@@ -22,6 +23,8 @@ import kotlin.coroutines.CoroutineContext
 class Router(
     private val observationRegistry: ObservationRegistry,
 ) {
+    private val logger = LoggerFactory.getLogger(Router::class.java)
+
     @Bean
     fun routes(
         baggageAddingFilter: BaggageAddingFilter,
@@ -45,6 +48,7 @@ class Router(
     }
 
     private fun contextProvider(): suspend (ServerRequest) -> CoroutineContext = { request ->
+        logger.info("contextProvider() is called for ${request.uri()}")
         // XXX if context is defined yet, we need to define one here and add observation in there
         if (CoWebFilter.COROUTINE_CONTEXT_ATTRIBUTE !in request.attributes()) {
             request.attributes()[CoWebFilter.COROUTINE_CONTEXT_ATTRIBUTE] =
