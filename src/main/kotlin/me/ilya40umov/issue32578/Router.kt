@@ -4,9 +4,11 @@ import io.micrometer.core.instrument.kotlin.asContextElement
 import io.micrometer.observation.ObservationRegistry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
-import me.ilya40umov.issue32578.filters.BaggageAddingFilter
-import me.ilya40umov.issue32578.filters.FeatureFlagsContextFilter
+import me.ilya40umov.issue32578.filters.v1.MdcAddingFilterV1
+import me.ilya40umov.issue32578.filters.v1.UserContextFilterV1
 import me.ilya40umov.issue32578.filters.RequestLoggingFilter
+import me.ilya40umov.issue32578.filters.v2.MdcAddingFilterV2
+import me.ilya40umov.issue32578.filters.v2.UserContextFilterV2
 import org.slf4j.LoggerFactory
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
@@ -27,35 +29,48 @@ class Router(
 
     @Bean
     fun routes(
-        baggageAddingFilter: BaggageAddingFilter,
         requestLoggingFilter: RequestLoggingFilter,
-        featureFlagsContextFilter: FeatureFlagsContextFilter
+        mdcAddingFilterV1: MdcAddingFilterV1,
+        mdcAddingFilterV2: MdcAddingFilterV2,
+        userContextFilterV1: UserContextFilterV1,
+        userContextFilterV2: UserContextFilterV2
     ): RouterFunction<ServerResponse> = coRouter {
-        // XXX we don't want any of the filters etc. to apply to these endpoints,
-        //  which is why if we were to use CoWebFilter, we would need to make those aware of all endpoints to ignore
+        // it's possible that some endpoints don't need some / all the filters
         GET("/internal/get-something") { _ ->
+            logger.info("Handling a request to /internal/get-something endpoint")
             ServerResponse.ok().bodyValueAndAwait(mapOf("some" to "value"))
         }
     } + coRouter {
+        // XXX this does not work
+        filter(mdcAddingFilterV1)
+        filter(userContextFilterV1)
+        filter(requestLoggingFilter)
+        GET("/api/v1/username") { _ ->
+            logger.info("Handling a request to /api/v1/username endpoint")
+            val userContext = currentCoroutineContext()[UserContext.Key]
+            ServerResponse.ok()
+                .bodyValueAndAwait(mapOf("username" to userContext.username()))
+        }
+    } + coRouter {
+        // XXX this approach works, but is ugly
         context(contextProvider())
-        filter(baggageAddingFilter) // this filter adds baggage to the current trace
-        filter(requestLoggingFilter) // this filter is logging a request relying on baggage already being there
-        filter(featureFlagsContextFilter) // this filter is modifying the coroutine context further by adding FF context
-        GET("/api/username") { _ ->
-            val ffContext = currentCoroutineContext()[FeatureFlagsContextFilter.FeatureFlagsContext.Key]!!
-            ServerResponse.ok().bodyValueAndAwait(mapOf("username" to ffContext.attributes["username"]))
+        filter(mdcAddingFilterV2)
+        filter(userContextFilterV2)
+        filter(requestLoggingFilter)
+        GET("/api/v2/username") { _ ->
+            logger.info("Handling a request to /api/v2/username endpoint")
+            val userContext = currentCoroutineContext()[UserContext.Key]
+            ServerResponse.ok()
+                .bodyValueAndAwait(mapOf("username" to userContext.username()))
         }
     }
 
     private fun contextProvider(): suspend (ServerRequest) -> CoroutineContext = { request ->
         logger.info("contextProvider() is called for ${request.uri()}")
-        // XXX if context is defined yet, we need to define one here and add observation in there
         if (CoWebFilter.COROUTINE_CONTEXT_ATTRIBUTE !in request.attributes()) {
             request.attributes()[CoWebFilter.COROUTINE_CONTEXT_ATTRIBUTE] =
                 Dispatchers.Unconfined + observationRegistry.asContextElement()
         }
-        // XXX and then we need to always return the value stored under CoWebFilter.COROUTINE_CONTEXT_ATTRIBUTE
-        // to make sure that we have some sort of propagation between different filters etc.
         request.attributes()[CoWebFilter.COROUTINE_CONTEXT_ATTRIBUTE] as CoroutineContext
     }
 }

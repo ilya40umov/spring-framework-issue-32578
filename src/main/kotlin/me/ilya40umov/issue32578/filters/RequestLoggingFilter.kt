@@ -14,7 +14,7 @@ class RequestLoggingFilter : CoRouterFilter {
         request: ServerRequest,
         next: suspend (ServerRequest) -> ServerResponse
     ): ServerResponse {
-        logger.info("EP called: ${request.method()} ${request.path()}")
+        logger.info("Logging incoming request: ${request.method()} ${request.path()}")
         return next(request)
     }
 }
